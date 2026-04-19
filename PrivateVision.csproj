@@ -1,0 +1,43 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="resources\privatevision_logo.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="resources\privatevision_logo.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LLamaSharp" Version="0.26.0" />
+    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.26.0" />
+    <PackageReference Include="OutSystems.ExternalLibraries.SDK" Version="1.5.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+  </ItemGroup>
+
+	<ItemGroup>
+		<None Update="extra\libgomp.so.1">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+	<Target Name="ArrangeLibraries" AfterTargets="Publish">
+		<ItemGroup>
+			<ExtraLibraries Include="$(PublishDir)\extra\*.*" />
+		</ItemGroup>
+		<Copy SourceFiles="@(ExtraLibraries)" DestinationFolder="$(PublishDir)" />
+		<RemoveDir Directories="$(PublishDir)\extra" />
+		<RemoveDir Directories="$(PublishDir)\runtimes\linux-x64\native\avx" />
+		<RemoveDir Directories="$(PublishDir)\runtimes\linux-x64\native\avx512" />
+		<RemoveDir Directories="$(PublishDir)\runtimes\linux-x64\native\noavx" />
+	</Target>
+
+</Project>
