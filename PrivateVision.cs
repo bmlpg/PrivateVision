@@ -43,7 +43,7 @@ namespace PrivateVision
         {
             Stopwatch sw = Stopwatch.StartNew();
 
-            Task.Run(async () => await DownloadModelsParallel()).GetAwaiter().GetResult();
+            Task.Run(async () => await DownloadModels()).GetAwaiter().GetResult();
 
             Response response = new Response();
 
@@ -123,7 +123,7 @@ namespace PrivateVision
         {
         }
 
-        private async Task DownloadModelsParallel()
+        private async Task DownloadModels()
         {
             var modelDir = Path.GetTempPath();
             var tasks = new List<Task>();
@@ -135,7 +135,7 @@ namespace PrivateVision
             };
 
             using var client = new HttpClient();
-            client.DefaultRequestHeaders.Add("User-Agent", "OutSystems-PrivateVision-ODC");
+            client.DefaultRequestHeaders.Add("User-Agent", "OutSystems-PrivateVision-Plugin-ODC");
 
             foreach (var file in filesToDownload)
             {
