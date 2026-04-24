@@ -2,7 +2,7 @@
 
 namespace PrivateVision
 {
-    [OSInterface(Name = "PrivateVision", Description = "Secure, free, and fully local AI Vision for ODC.", IconResourceName = "PrivateVision.resources.privatevision_logo.png")]
+    [OSInterface(Name = "PrivateVision", Description = "Experimental free and fully local AI Vision for ODC.", IconResourceName = "PrivateVision.resources.privatevision_logo.png")]
     public interface IPrivateVision
     {
         [OSAction(ReturnName = "Response")]
