@@ -67,7 +67,7 @@ namespace PrivateVision
                 var mmProjPath = Path.Combine(Path.GetTempPath(), "mmProj.gguf");
                 using var clipModel = MtmdWeights.LoadFromFile(mmProjPath, model, mtmdParameters);
 
-                byte[] resizedImage = ResizeImageForAI(Image, 384, 384);
+                byte[] resizedImage = ResizeImageForAI(Image, 384);
                 using var image = clipModel.LoadMedia(resizedImage);
 
                 // 4. Create the Multimodal Prompt (ChatML format)
@@ -186,7 +186,7 @@ namespace PrivateVision
             }
         }
 
-        private static byte[] ResizeImageForAI(byte[] imageBuffer, int width, int height)
+        private static byte[] ResizeImageForAI(byte[] imageBuffer, int maxDimension)
         {
             using (MemoryStream inStream = new MemoryStream(imageBuffer))
             using (MemoryStream outStream = new MemoryStream())
@@ -197,7 +197,7 @@ namespace PrivateVision
                     // 2. Resize using the 'Lanczos3' sampler (best quality for OCR/Text)
                     image.Mutate(x => x.Resize(new ResizeOptions
                     {
-                        Size = new Size(width, height),
+                        Size = new Size(maxDimension, maxDimension),
                         Mode = ResizeMode.Max // Maintains aspect ratio within the bounds
                     }));
 
