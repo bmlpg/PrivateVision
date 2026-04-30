@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using LLama;
 using LLama.Common;
@@ -14,9 +15,17 @@ namespace PrivateVision
     {
         private readonly ILogger _logger;
 
+        private static bool initialized = false;
+
+        private static LLamaWeights? model;
+        private static MtmdWeights? clipModel;
+
+
         public PrivateVision(ILogger logger)
         {
             _logger = logger;
+
+            if(initialized) return;
 
             LLama.Native.NativeLibraryConfig.All.WithLogCallback((level, message) =>
             {
@@ -37,35 +46,47 @@ namespace PrivateVision
                     _logger.LogWarning($"LL# NATIVE WARNING: {message}");
                 }
             });
+
+            initialized = true;
         }
 
-        public Response Call(string UserPrompt, byte[] Image)
+        [DllImport("libc")]
+        public static extern int malloc_trim(uint pad);
+
+        public Response Call(string UserPrompt, byte[] Image, int Threads)
         {
-            Stopwatch sw = Stopwatch.StartNew();
+            if (Threads < 1)
+            {
+                throw new ArgumentException("Threads must be greater or equal than 1");
+            }
 
             Task.Run(async () => await DownloadModels()).GetAwaiter().GetResult();
 
             Response response = new Response();
 
+            var modelPath = Path.Combine(Path.GetTempPath(), "model.gguf");
+            var parameters = new ModelParams(modelPath)
+            {
+                ContextSize = 1024,
+                GpuLayerCount = 0,
+                UseMemorymap = false,
+                Threads = Threads
+            };
+
+            var mtmdParameters = MtmdContextParams.Default();
+            mtmdParameters.UseGpu = false;
+
             try
             {
-                var modelPath = Path.Combine(Path.GetTempPath(), "model.gguf");
-                var parameters = new ModelParams(modelPath)
+                if (model is null)
                 {
-                    ContextSize = 512,
-                    GpuLayerCount = 0,
-                    UseMemorymap = false,    
-                    Threads = 1              
-                };
+                    model = LLamaWeights.LoadFromFile(parameters);
 
-                var mtmdParameters = MtmdContextParams.Default();
-                mtmdParameters.UseGpu = false;
+                    var mmProjPath = Path.Combine(Path.GetTempPath(), "mmProj.gguf");
+                    clipModel = MtmdWeights.LoadFromFile(mmProjPath, model, mtmdParameters);
+                }
 
-                using var model = LLamaWeights.LoadFromFile(parameters);
                 using var context = model.CreateContext(parameters);
-
-                var mmProjPath = Path.Combine(Path.GetTempPath(), "mmProj.gguf");
-                using var clipModel = MtmdWeights.LoadFromFile(mmProjPath, model, mtmdParameters);
 
                 byte[] resizedImage = ResizeImageForAI(Image, 384);
                 using var image = clipModel.LoadMedia(resizedImage);
@@ -77,44 +98,55 @@ namespace PrivateVision
                 var executor = new InteractiveExecutor(context, clipModel);
                 executor.Embeds.Add(image);
 
+                using var pipeline = new DefaultSamplingPipeline()
+                {
+                    Temperature = 0.0f,
+                    RepeatPenalty = 1.1f,
+                    PresencePenalty = 0.1f
+                };
+
                 // We use the clipModel to 'project' the image into the context
                 var inferenceParams = new InferenceParams()
                 {
                     MaxTokens = 512, 
                     AntiPrompts = new[] { "<|im_end|>" },
-                    SamplingPipeline = new DefaultSamplingPipeline()
-                    {
-                        Temperature = 0.0f,
-                        RepeatPenalty = 1.1f,
-                        PresencePenalty = 0.1f
-                    }
+                    SamplingPipeline = pipeline
                 };
 
-                // This is the magic line where vision meets text
-                response.Result = Task.Run(async () =>
-                {
-                    var responseBuilder = new System.Text.StringBuilder();
+                Stopwatch sw = Stopwatch.StartNew();
 
+                var responseBuilder = new System.Text.StringBuilder();
+
+                // This is the magic line where vision meets text
+                Task.Run(async () =>
+                {
                     await foreach (var token in executor.InferAsync(fullPrompt, inferenceParams))
                     {
                         responseBuilder.Append(token);
                     }
-
-                    return GetJsonOrOriginal(responseBuilder.ToString().Trim());
                 }).GetAwaiter().GetResult();
 
-            }
-            finally
-            {
+                response.Result = GetJsonOrOriginal(responseBuilder.ToString().Trim());
+
                 sw.Stop();
                 response.Duration = sw.ElapsedMilliseconds;
 
-                // 6. Manual Cleanup (Critical for ODC stability)
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
+                var process = Process.GetCurrentProcess();
+                process.Refresh();
+                response.TotalMemoryMB = (int)(process.WorkingSet64 / (1024 * 1024));
+            }
+            finally
+            {
+                try
+                {
+                    malloc_trim(0);
+                }
+                catch
+                {
+                    /* Fallback for non-linux environments */
+                }
             }
             
-
             return response;
             // Implementation here
         }
