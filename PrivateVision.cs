@@ -20,6 +20,8 @@ namespace PrivateVision
         private static LLamaWeights? model;
         private static MtmdWeights? clipModel;
 
+        private static int currentContextSize = 0;
+        private static int currentThreads = 0;
 
         public PrivateVision(ILogger logger)
         {
@@ -53,39 +55,70 @@ namespace PrivateVision
         [DllImport("libc")]
         public static extern int malloc_trim(uint pad);
 
-        public Response Call(string UserPrompt, byte[] Image, int Threads)
+        public Response Call(
+            string UserPrompt,
+            byte[] Image,
+            float Temperature = 0.0f,
+            int MaxTokens = 256,
+            int ContextSize = 1024,
+            int Threads = 1
+        )
         {
+
+            if (ContextSize < 128)
+            {
+                throw new ArgumentException("ContextSize must be greater or equal than 128");
+            }
+
             if (Threads < 1)
             {
                 throw new ArgumentException("Threads must be greater or equal than 1");
             }
 
-            Task.Run(async () => await DownloadModels()).GetAwaiter().GetResult();
+            if (Temperature < 0.0f || Temperature > 2.0f)
+            {
+                throw new ArgumentException("Temperature must be between 0.0 and 2.0");
+            }
+
+            if (MaxTokens < 128)
+            {
+                throw new ArgumentException("MaxTokens must be greated or equal than 128");
+            }
 
             Response response = new Response();
 
-            var modelPath = Path.Combine(Path.GetTempPath(), "model.gguf");
-            var parameters = new ModelParams(modelPath)
-            {
-                ContextSize = 1024,
-                GpuLayerCount = 0,
-                UseMemorymap = false,
-                Threads = Threads
-            };
-
-            var mtmdParameters = MtmdContextParams.Default();
-            mtmdParameters.UseGpu = false;
-
             try
             {
+                var modelPath = Path.Combine(Path.GetTempPath(), "model.gguf");
+                var parameters = new ModelParams(modelPath)
+                {
+                    ContextSize = (uint)ContextSize,
+                    GpuLayerCount = 0,
+                    UseMemorymap = false,
+                    Threads = Threads
+                };
+
+                var mtmdParameters = MtmdContextParams.Default();
+                mtmdParameters.UseGpu = false;
+
                 if (model is null)
                 {
+                    Task.Run(async () => await DownloadModels()).GetAwaiter().GetResult();
                     model = LLamaWeights.LoadFromFile(parameters);
-
                     var mmProjPath = Path.Combine(Path.GetTempPath(), "mmProj.gguf");
                     clipModel = MtmdWeights.LoadFromFile(mmProjPath, model, mtmdParameters);
                 }
-
+                else if (currentContextSize != ContextSize || currentThreads != Threads)
+                {
+                    model.Dispose();
+                    clipModel.Dispose();
+                    model = LLamaWeights.LoadFromFile(parameters);
+                    var mmProjPath = Path.Combine(Path.GetTempPath(), "mmProj.gguf");
+                    clipModel = MtmdWeights.LoadFromFile(mmProjPath, model, mtmdParameters);
+                    currentContextSize = ContextSize;
+                    currentThreads = Threads;
+                }
+                
                 using var context = model.CreateContext(parameters);
 
                 byte[] resizedImage = ResizeImageForAI(Image, 384);
@@ -100,7 +133,7 @@ namespace PrivateVision
 
                 using var pipeline = new DefaultSamplingPipeline()
                 {
-                    Temperature = 0.0f,
+                    Temperature = Temperature,
                     RepeatPenalty = 1.1f,
                     PresencePenalty = 0.1f
                 };
@@ -108,7 +141,7 @@ namespace PrivateVision
                 // We use the clipModel to 'project' the image into the context
                 var inferenceParams = new InferenceParams()
                 {
-                    MaxTokens = 512, 
+                    MaxTokens = MaxTokens, 
                     AntiPrompts = new[] { "<|im_end|>" },
                     SamplingPipeline = pipeline
                 };
